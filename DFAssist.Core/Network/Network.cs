@@ -54,6 +54,7 @@ namespace DFAssist.Core.Network
 
         public bool StartCapture(System.Diagnostics.Process process)
         {
+            const string ENV_VAR = "DFASSIST_FORCE_TCP";
             _pid = process.Id;
             try
             {
@@ -76,14 +77,41 @@ namespace DFAssist.Core.Network
 
                 var localAddress = localConnection.LocalEndPoint.Address;
                 _logger.Write($"N: Local EndPoint Found: {localAddress}", LogLevel.Info);
-                
-                RegisterToFirewall();
 
-                _socket = new Socket(AddressFamily.InterNetwork, SocketType.Raw, ProtocolType.IP);
+                bool IsWindows = true;
+
+                if (Environment.GetEnvironmentVariable(ENV_VAR) == "1") {
+                    _logger.Write($"N: {ENV_VAR} is set to 1. Using a TCP socket for WINE compatibility.", LogLevel.Info);
+                    IsWindows = false;
+                }
+                else {
+                    _logger.Write("N: Checking for System Idle Process...", LogLevel.Debug);
+                    System.Diagnostics.Process[] idleprocess = System.Diagnostics.Process.GetProcessesByName("Idle");
+                    if(idleprocess.Length == 0)
+                    {
+                        _logger.Write("N: Did not detect Idle process. Using a TCP socket for WINE compatability.", LogLevel.Info);
+                        IsWindows = false;
+                    }
+                }
+
+
+                if (IsWindows)
+                {
+                    RegisterToFirewall();
+                    _socket = new Socket(AddressFamily.InterNetwork, SocketType.Raw, ProtocolType.IP);
+                    _socket.IOControl(IOControlCode.ReceiveAll, RcvallIplevel, null);
+                    _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AcceptConnection, true);
+                }
+                else
+                {
+                    _logger.Write("N: WINE mode enabled; registering TCP socket.", LogLevel.Debug);
+                    _socket = new Socket(AddressFamily.InterNetwork, SocketType.Raw, ProtocolType.Tcp);
+                }
+
                 _socket.Bind(new IPEndPoint(localAddress, 0));
                 _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.HeaderIncluded, true);
-                _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AcceptConnection, true);
-                _socket.IOControl(IOControlCode.ReceiveAll, RcvallIplevel, null);
+
+
                 _socket.ReceiveBufferSize = _recvBuffer.Length * 4;
 
                 _socket.BeginReceive(_recvBuffer, 0, _recvBuffer.Length, 0, OnReceive, null);
